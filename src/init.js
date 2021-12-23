@@ -21,7 +21,11 @@ const SERVER_ROOT = "http://localhost:8080/";
  * @type {string[]}
  */
 const FILES = [
-	"script/test.js",
+	// libs
+	"constants.js",
+	"scan.js",
+	// scripts
+	"test.js",
 ];
 
 /**
@@ -31,9 +35,8 @@ const FILES = [
 export async function main(ns) {
 	for (const file of FILES) {
 		const url = SERVER_ROOT + file;
-		const filePath = "/" + file;
-		if (!await ns.wget(url, filePath, HOME)) {
-			ns.tprintf("Failed to retrieve/save file `%s` from `%s` at `%s`", file, url, filePath);
+		if (!await ns.wget(url, file, HOME)) {
+			ns.tprintf("Failed to retrieve/save file `%s` from `%s`", file, url);
 			return;
 		}
 	}

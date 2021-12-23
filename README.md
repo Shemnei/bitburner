@@ -7,9 +7,15 @@ For that to work each function must be [documented accordingly](https://jsdoc.ap
 
 A template for a netscript2 is available at 'src/template.js'.
 
+## File hierarchy
+
+The file structure in `src` is kept flat intentionally as `Bitburner` requires
+import paths for scripts to be absolute. Keeping the hierarchy flat will make
+this simple.
+
 ## Typescript definitions
 
-The typescript definitions for the game are located at 'src/bitburner.t.ts' and
+The typescript definitions for the game are located at 'src/typedef/bitburner.t.ts' and
 are pulled from the [games github](https://github.com/danielyxie/bitburner/blob/master/src/ScriptEditor/NetscriptDefinitions.d.ts).
 
 ## Requirements

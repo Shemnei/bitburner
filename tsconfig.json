@@ -4,7 +4,8 @@
 		"checkJs": true,
 		"strict": true,
 		"noEmit": true,
-		"lib": ["ES2015"]
+		"downlevelIteration": true,
+		"lib": ["ES2015"],
 	},
 	"include": ["src/**/*.js"],
 }
