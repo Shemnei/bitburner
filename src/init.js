@@ -22,10 +22,17 @@ const SERVER_ROOT = "http://localhost:8080/";
  */
 const FILES = [
 	// libs
-	"constants.js",
-	"scan.js",
+	"const.js",
+	"libscan.js",
+	"libpwn.js",
+	"libhost.js",
+	"libserver.js",
 	// scripts
 	"test.js",
+	// implants
+	"grow.js",
+	"weaken.js",
+	"hack.js",
 ];
 
 /**
@@ -41,5 +48,6 @@ export async function main(ns) {
 		}
 	}
 
-	// TODO: call next script
+	// TODO: put into const
+	ns.spawn("test.js");
 }

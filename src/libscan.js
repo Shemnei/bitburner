@@ -1,4 +1,4 @@
-import {HOME} from './constants.js';
+import {HOME} from 'const.js';
 
 /**
  * @typedef { import('./typedef/bitburner.t').NS } NS
@@ -6,8 +6,10 @@ import {HOME} from './constants.js';
 
 /**
  * Creates a set of all hosts on the network.
+ *
  * @param {NS} ns - Netscript API
  * @param {string} [rootHost=HOME] - Root server from which to start the scan
+ *
  * @returns {Set<string>} - List of all servers on the same network as rootHost
  */
 export function discoverAll(ns, rootHost = HOME) {

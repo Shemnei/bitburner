@@ -5,6 +5,7 @@
 		"strict": true,
 		"noEmit": true,
 		"downlevelIteration": true,
+		"baseUrl": "src",
 		"lib": ["ES2015"],
 	},
 	"include": ["src/**/*.js"],
