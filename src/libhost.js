@@ -32,3 +32,14 @@ export function score(ns, host) {
 export function getFreeRam(ns, host) {
 	return ns.getServerMaxRam(host) - ns.getServerUsedRam(host);
 }
+
+/**
+ * Checks if the host can be used to execute common actions (e.g. not protected).
+ *
+ * @param {string} host - List of hosts
+ *
+ * @returns {boolean} - Indicates if the host is allowed for common actions
+ */
+export function isAllowed(host) {
+	return !(host === HOME || host.startsWith("protected"));
+}

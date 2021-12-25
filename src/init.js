@@ -27,8 +27,16 @@ const FILES = [
 	"libpwn.js",
 	"libhost.js",
 	"libserver.js",
+	"libhacknet.js",
+	"libutil.js",
 	// scripts
-	"test.js",
+	"reset.js",
+	// stages
+	"trampoline.js",
+	"stage0.js",
+	"stage0_hacknet.js",
+	"stage1.js",
+	"stage1_hacknet.js",
 	// implants
 	"grow.js",
 	"weaken.js",
@@ -40,14 +48,17 @@ const FILES = [
  * @param {NS} ns - Netscript API
  */
 export async function main(ns) {
+	ns.tprint("Downloading required scripts");
+
 	for (const file of FILES) {
 		const url = SERVER_ROOT + file;
+		ns.tprintf("\tDownloading `%s` from `%s`", file, url);
 		if (!await ns.wget(url, file, HOME)) {
 			ns.tprintf("Failed to retrieve/save file `%s` from `%s`", file, url);
 			return;
 		}
 	}
 
-	// TODO: put into const
-	ns.spawn("test.js");
+	ns.tprint("Lauching trampoline");
+	ns.spawn("trampoline.js");
 }
