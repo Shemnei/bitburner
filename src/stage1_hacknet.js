@@ -22,7 +22,7 @@ export async function main(ns) {
 			// Failed to buy
 			await ns.sleep(3000);
 		} else {
-			setupNode(ns, index);
+			await setupNode(ns, index);
 		}
 	}
 
