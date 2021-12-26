@@ -5,23 +5,6 @@ import {HOME} from 'const.js';
  */
 
 /**
- * Returns a score for the host.
- * This score determines the "optimal" target to hack.
- * The higher the score the better.
- *
- * @param {NS} ns - Netscript API
- * @param {string} host - Host to score
- *
- * @returns {number} - Score of the host
- */
-export function score(ns, host) {
-	const value = ns.getServerMaxMoney(host);
-	const time = ns.getWeakenTime(host) + ns.getGrowTime(host) + ns.getHackTime(host);
-
-	return value / time;
-}
-
-/**
  * Returns the amount of free ram for a host.
  *
  * @param {NS} ns - Netscript API
@@ -34,12 +17,31 @@ export function getFreeRam(ns, host) {
 }
 
 /**
- * Checks if the host can be used to execute common actions (e.g. not protected).
+ * Retains all hosts which are allowed to be the source of an attack.
  *
- * @param {string} host - List of hosts
+ * @param {string[]} hosts - List of hosts (@see discoverAll)
  *
- * @returns {boolean} - Indicates if the host is allowed for common actions
+ * @returns {string[]} - hosts for an attack
  */
-export function isAllowed(host) {
-	return !(host === HOME || host.startsWith("protected"));
+export function retainSources(hosts) {
+	return hosts.filter((host) =>
+		!host.startsWith("protected")
+	);
+}
+
+/**
+ * Retains all hosts which are allowed to be the target of an attack.
+ *
+ * @param {NS} ns - Netscript API
+ * @param {string[]} hosts - List of hosts (@see discoverAll)
+ *
+ * @returns {string[]} - hosts for a target
+ */
+export function retainTargets(ns, hosts) {
+	const playerHackingLevel = ns.getHackingLevel();
+
+	return hosts.filter((host) =>
+		ns.getServerMaxMoney(host) > 0 // should filter out all player owned servers
+		&& playerHackingLevel >= ns.getServerRequiredHackingLevel(host)
+	);
 }

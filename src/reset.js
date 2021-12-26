@@ -12,8 +12,8 @@ export async function main(ns) {
 
 	const ps = ns.ps(host);
 
+	ns.tprint("Killing all scripts");
 	for (const p of ps) {
-		ns.tprint("Killing all scripts");
 		if (p.filename !== ns.getScriptName()) {
 			ns.kill(p.filename, host, ...p.args);
 		}

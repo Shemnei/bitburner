@@ -79,46 +79,46 @@ function checkFlags(ns, flags) {
 	if (typeof dryRun === 'boolean') {
 		vArgs.dryRun = dryRun;
 	} else {
-		ns.tprint("Argument `dryRun` not of type boolean");
+		ns.tprint("ERROR Argument `dryRun` not of type boolean");
 		vArgs.valid = false;
 	}
 
 	const minRam = flags.minRam;
 	if (typeof minRam === 'number') {
 		if (minRam < 1 || minRam > MAX_RAM) {
-			ns.tprint(`Argument 'minRam' must in in bounds [1 - ${MAX_RAM}]`);
+			ns.tprint(`ERROR Argument 'minRam' must in in bounds [1 - ${MAX_RAM}]`);
 			vArgs.valid = false;
 		} else {
 			vArgs.minRam = minRam;
 		}
 	} else {
-		ns.tprint("Argument `minRam` not of type number");
+		ns.tprint("ERROR Argument `minRam` not of type number");
 		vArgs.valid = false;
 	}
 
 	const maxMoneyFrac = flags.maxMoneyFrac;
 	if (typeof maxMoneyFrac === 'number') {
 		if (maxMoneyFrac < 0 || maxMoneyFrac > 1) {
-			ns.tprint(`Argument 'maxMoneyFrac' must in in bounds [0.0 - 1.0]`);
+			ns.tprint(`ERROR Argument 'maxMoneyFrac' must in in bounds [0.0 - 1.0]`);
 			vArgs.valid = false;
 		} else {
 			vArgs.maxMoneyFrac = maxMoneyFrac;
 		}
 	} else {
-		ns.tprint("Argument `maxMoneyFrac` not of type number");
+		ns.tprint("ERROR Argument `maxMoneyFrac` not of type number");
 		vArgs.valid = false;
 	}
 
 	const namePrefix = flags.namePrefix;
 	if (typeof namePrefix === 'string') {
 		if (namePrefix.length === 0) {
-			ns.tprint(`Argument 'namePrefix' can not be empty`);
+			ns.tprint(`ERROR Argument 'namePrefix' can not be empty`);
 			vArgs.valid = false;
 		} else {
 			vArgs.namePrefix = namePrefix;
 		}
 	} else {
-		ns.tprint("Argument `namePrefix` not of type string");
+		ns.tprint("ERROR Argument `namePrefix` not of type string");
 		vArgs.valid = false;
 	}
 
@@ -182,7 +182,7 @@ export async function main(ns) {
 		}
 	}
 
-	ns.tprint("Failed find server for requirements");
+	ns.tprint("ERROR Failed find server for requirements");
 }
 
 

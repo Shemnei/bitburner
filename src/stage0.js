@@ -5,10 +5,17 @@
 import {HOME, IMPLANT_PATH_HACK} from 'const.js';
 import {discoverAll} from 'libscan.js';
 import {tryPwn} from 'libpwn.js';
-import {isAllowed, getFreeRam} from 'libhost.js';
+import {getFreeRam, retainSources, retainTargets} from 'libhost.js';
 import {HOME_RAM_REQUIRED} from 'stage1.js';
 
 // TODO: const list of requirements/dependencies
+
+/**
+ * Indicates if hacknet should be upgraded (can be enabled for offline income).
+ *
+ * @type {boolean}
+ */
+const UPGRADE_HACKNET = false;
 
 /**
  * Checks if the requirements for this stage are met.
@@ -46,23 +53,22 @@ export async function main(ns) {
 	ns.tprint("-----------------");
 
 	for (var i = 0; i < 3; ++i) {
-		const allowedHosts = Array.from(discoverAll(ns)).filter(isAllowed);
-		const rooted = tryPwn(ns, allowedHosts);
+		const hosts = retainSources(Array.from(discoverAll(ns)));
+		ns.tprint(hosts);
+		const sources = Array.from(tryPwn(ns, hosts).keys());
+		const targets = retainTargets(ns, sources)
+			.sort((a, b) => score(ns, b) - score(ns, a));
 
-		const playerHackingLevel = ns.getHackingLevel();
-		let target = undefined;
-		let targetScore = undefined;
+		sources.push(HOME);
 
-		for (const host of rooted.keys()) {
-			if (playerHackingLevel >= ns.getServerRequiredHackingLevel(host)) {
-				const hostScore = score(ns, host);
+		ns.print("Targets: " + targets);
 
-				if (typeof targetScore === 'undefined' || targetScore < hostScore) {
-					target = host;
-					targetScore = hostScore;
-				}
-			}
+		if (targets.length === 0) {
+			ns.tprint("No targets found");
+			return;
 		}
+
+		const target = targets[0];
 
 		if (typeof target !== 'undefined') {
 			ns.tprint("Next Target: " + target);
@@ -71,12 +77,11 @@ export async function main(ns) {
 			const script = IMPLANT_PATH_HACK;
 			const execTime = ns.getHackTime(target);
 
-			for (const host of rooted.keys()) {
-				// Copy over required script
-				await ns.scp(script, HOME, host);
-
-				// Kill all running scripts
-				ns.killall(host);
+			for (const host of sources) {
+				if (host !== HOME) {
+					// Copy over required script
+					await ns.scp(script, HOME, host);
+				}
 
 				// Calculate max amount of threads for script and host.
 				// Floor is used as `exec` will round to the nearest integer
@@ -84,7 +89,7 @@ export async function main(ns) {
 				var numThreads = Math.floor(getFreeRam(ns, host) / ns.getScriptRam(script, HOME));
 
 				if (numThreads > 0) {
-					ns.exec(script, host, numThreads, target);
+					ns.exec(script, host, numThreads, target, 1);
 				}
 			}
 
@@ -100,6 +105,11 @@ export async function main(ns) {
 		}
 	}
 
-	ns.spawn("stage0_hacknet.js");
-	//ns.spawn("trampoline.js");
+	if (UPGRADE_HACKNET) {
+		ns.tprint("Launching hacknet upgrade script");
+		ns.spawn("stage0_hacknet.js");
+	} else {
+		ns.tprint("Re-checking requirements");
+		ns.spawn("trampoline.js");
+	}
 }

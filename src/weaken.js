@@ -8,10 +8,17 @@
  */
 export async function main(ns) {
 	const target = ns.args[0];
+	const amount = ns.args[1];
 
 	if (typeof target === 'string') {
-		while (true) {
-			await ns.weaken(target);
+		if (typeof amount === 'number') {
+			for (var i = 0; i < amount; ++i) {
+				await ns.weaken(target);
+			}
+		} else {
+			while (true) {
+				await ns.weaken(target);
+			}
 		}
 	}
 }

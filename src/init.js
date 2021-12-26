@@ -30,8 +30,10 @@ const FILES = [
 	"libhacknet.js",
 	"libutil.js",
 	// scripts
-	"reset.js",
+	"/script/info.js",
+	"/script/buyserver.js",
 	// stages
+	"reset.js",
 	"trampoline.js",
 	"stage0.js",
 	"stage0_hacknet.js",

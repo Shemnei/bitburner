@@ -1,17 +1,34 @@
 /**
  * @typedef { import('./typedef/bitburner.t').NS } NS
+ * @typedef { import('./typedef/bitburner.t').Server } Server
  */
 
 import {HOME, IMPLANT_PATH_GROW, IMPLANT_PATH_WEAKEN, IMPLANT_PATH_HACK} from 'const.js';
 import {discoverAll} from 'libscan.js';
 import {tryPwn} from 'libpwn.js';
-import {getFreeRam, isAllowed} from 'libhost.js';
+import {getFreeRam, retainSources, retainTargets} from 'libhost.js';
 
 /**
  * Amount of ram required on the home server to advance to this stage.
+ *
  * @type {number}
  */
 export const HOME_RAM_REQUIRED = 32;
+
+/**
+ * Indicates if hacknet should be upgraded (can be enabled for offline income).
+ *
+ * @type {boolean}
+ */
+const UPGRADE_HACKNET = false;
+
+/**
+ * Additional amount of ram to keep reserved on the home server.
+ * This is in addition to the ram already occupied by running scripts.
+ *
+ * @type {number}
+ */
+const HOME_RAM_RESERVED = 16;
 
 /**
  * Checks if the requirements for this stage are met.
@@ -35,10 +52,24 @@ export function hasRequirements(ns) {
  * @returns {number} - Score of the host
  */
 export function score(ns, host) {
-	const value = ns.getServerMaxMoney(host);
-	const time = ns.getWeakenTime(host) + ns.getGrowTime(host) + ns.getHackTime(host);
+	const maxMoney = ns.getServerMaxMoney(host);
 
-	return value / time;
+	if (maxMoney > 0) {
+		const growthMultiplier = Math.ceil(maxMoney / (ns.getServerMoneyAvailable(host) + 0.001));
+		const threadsGrowFull = ns.growthAnalyze(host, growthMultiplier);
+		const timeGrowFull = ns.getGrowTime(host) * threadsGrowFull;
+
+		const securityLevelAfter = ns.getServerSecurityLevel(host) + ns.growthAnalyzeSecurity(threadsGrowFull);
+		const threadsSecurityMin = (securityLevelAfter - ns.getServerMinSecurityLevel(host)) / ns.weakenAnalyze(1);
+		const timeSecurityMin = ns.getWeakenTime(host) * threadsSecurityMin;
+
+		const threadsHack = 1.0 / ns.hackAnalyze(host);
+		const timeHack = ns.getHackTime(host) * threadsHack;
+
+		return maxMoney / (timeGrowFull + timeSecurityMin + timeHack);
+	} else {
+		return 0;
+	}
 }
 
 /**
@@ -46,108 +77,288 @@ export function score(ns, host) {
  * @param {NS} ns - Netscript API
  */
 export async function main(ns) {
-	// Lauch supporting scripts.
-	ns.run("stage1_hacknet.js");
+	// TODO: Check
+	// Apparently classes have ram cost when a function from here is imported.
+	// The classes are defined inside the main function so that importing
+	// `hasRequirements` does not cost the ram of the classes.
 
-	ns.tprint("---- MESSAGE ----");
-	ns.tprint("To kickstart this stage buy the darknet upgrade and as many port opening software as possible.");
-	ns.tprint("After that try to gain favor with the tech factions.");
-	ns.tprint("-----------------");
+	class ChangeSet {
+		/**
+		 * @param {number} security - change in security level
+		 * @param {number} money - change in money
+		 */
+		constructor(security, money) {
+			this.security = security;
+			this.money = money;
+		}
+	}
 
-	while (true) {
-		const allowedHosts = Array.from(discoverAll(ns)).filter(isAllowed);
-		const rooted = tryPwn(ns, allowedHosts);
+	class Action {
+		static WEAKEN = 'weaken';
+		static GROW = 'grow';
+		static HACK = 'hack';
 
-		const playerHackingLevel = ns.getHackingLevel();
-		let target = undefined;
-		let targetScore = undefined;
-
-		for (const host of rooted.keys()) {
-			if (playerHackingLevel >= ns.getServerRequiredHackingLevel(host)) {
-				const hostScore = score(ns, host);
-
-				if (typeof targetScore === 'undefined' || targetScore < hostScore) {
-					target = host;
-					targetScore = hostScore;
-				}
-			}
+		/**
+		 * @param {string} type - type of the action (grow, weaken, hack)
+		 * @param {string} source - source (host) of the action
+		 * @param {string} target - target (host) of the action
+		 * @param {Date} startTime - time when the action was started
+		 * @param {number} execTime - execution time of the action in milliseconds
+		 * @param {number} threads - amount of threads
+		 * @param {ChangeSet} predictedChange - predicted change in target values
+		 */
+		constructor(type, source, target, startTime, execTime, threads, predictedChange) {
+			this.type = type;
+			this.source = source;
+			this.target = target;
+			this.startTime = startTime;
+			this.execTime = execTime;
+			this.threads = threads;
+			this.predictedChange = predictedChange;
 		}
 
-		if (typeof target !== 'undefined') {
-			ns.tprint("Next Target: " + target);
+		isRunning() {
+			return this.hasFinishedIn(0);
+		}
 
-			const moneyThreshold = ns.getServerMaxMoney(target) * 0.9;
-			const securityTreshold = ns.getServerMinSecurityLevel(target) + 3;
+		/**
+		 * @param {number} ms - Milliseconds
+		 */
+		hasFinishedIn(ms) {
+			const now = new Date().getTime();
+			return (this.startTime.getTime() + this.execTime) >= now + ms;
+		}
+	}
 
-			var numTimesToExecute = 0.05;
-			// TODO: Keep value at 2 for stage 1
-			numTimesToExecute += 1;
+	class HostManager {
+		/**
+		 * @type {Map<string, Action[]>}
+		 */
+		actions = new Map();
 
-			/**
-			 * @type {string}
-			 */
-			var script;
+		constructor(maxHackAmount = 0.3, maxMoneyGrowFrac = 1.0, hackFrac = 0.05) {
+			this.maxHackAmount = maxHackAmount;
+			this.maxMoneyGrowFrac = maxMoneyGrowFrac;
+			this.hackFrac = hackFrac;
+		}
 
-			/**
-			 * @type {number}
-			 */
-			var execTime;
+		/**
+		 * @param {NS} ns - Netscript API
+		 */
+		async run(ns) {
+			const hosts = retainSources(Array.from(discoverAll(ns)));
 
-			if (ns.getServerSecurityLevel(target) > securityTreshold) {
-				ns.tprint("weakening");
-				script = IMPLANT_PATH_WEAKEN;
-				execTime = ns.getWeakenTime(target);
-			} else if (ns.getServerMoneyAvailable(target) < moneyThreshold) {
-				ns.tprint("growing");
-				script = IMPLANT_PATH_GROW;
-				execTime = ns.getGrowTime(target);
-			} else {
-				ns.tprint("hacking");
-				script = IMPLANT_PATH_HACK;
-				execTime = ns.getHackTime(target);
-			}
+			const sources = Array.from(tryPwn(ns, hosts).keys());
+			const targets = retainTargets(ns, sources)
+				.sort((a, b) => score(ns, b) - score(ns, a));
+			ns.print("Targets: " + targets);
 
-			if (typeof script === 'undefined' || typeof execTime === 'undefined') {
-				ns.tprint("Script error: `script` or `execTime` not defined");
+			if (targets.length === 0) {
+				ns.tprint("No targets found");
 				return;
 			}
 
-			for (const host of rooted.keys()) {
-				// Copy over required script
-				await ns.scp(script, HOME, host);
+			this.pruneActions();
 
-				// Kill all running scripts
-				ns.killall(host);
+			const weakenAmount = ns.weakenAnalyze(1);
 
-				// Calculate max amount of threads for script and host.
-				// Floor is used as `exec` will round to the nearest integer
-				// value which could exceed the ram, causing `exec` to fail.
-				var numThreads = Math.floor(getFreeRam(ns, host) / ns.getScriptRam(script, HOME));
+			for (const target of targets) {
+				const targetInfo = ns.getServer(target);
 
-				if (numThreads > 0) {
-					ns.exec(script, host, numThreads, target);
+				const actionOptions = [
+					{
+						type: Action.HACK,
+						execTime: ns.getHackTime(target),
+					},
+					{
+						type: Action.GROW,
+						execTime: ns.getGrowTime(target),
+					},
+					{
+						type: Action.WEAKEN,
+						execTime: ns.getWeakenTime(target),
+					},
+				].sort((a, b) => a.execTime - b.execTime);
+
+				for (const actionOption of actionOptions) {
+					var actions = this.actions.get(target);
+					if (typeof actions === 'undefined') {
+						actions = [];
+					}
+
+					const finishedActions = actions
+						.filter((action) => action.hasFinishedIn(actionOption.execTime))
+						.map((action) => action.predictedChange);
+					const appliedInfo = applyChanges({...targetInfo}, finishedActions);
+
+					if (actionOption.type === Action.GROW) {
+						const money = appliedInfo.moneyAvailable;
+						const moneyMaxCalc = appliedInfo.moneyMax * this.maxMoneyGrowFrac;
+
+						if (money < moneyMaxCalc) {
+							const growthMultiplier = Math.ceil(moneyMaxCalc / (money + 0.001));
+							const threads = Math.ceil(ns.growthAnalyze(target, growthMultiplier));
+
+							//const change = new ChangeSet(ns.growthAnalyzeSecurity(threads), money * growthMultiplier);
+
+							if (await this.trySchedule(ns, actionOption, target, threads, sources) < threads) {
+								return;
+							}
+						}
+					} else if (actionOption.type === Action.WEAKEN) {
+						const security = appliedInfo.hackDifficulty;
+						const securityMin = appliedInfo.minDifficulty;
+
+						if (security > securityMin) {
+							const securityDiff = security - securityMin;
+							const threads = Math.ceil(securityDiff / weakenAmount);
+
+							if (await this.trySchedule(ns, actionOption, target, threads, sources) < threads) {
+								return;
+							}
+						}
+					} else if (actionOption.type === Action.HACK) {
+						const security = appliedInfo.hackDifficulty;
+						const securityMin = appliedInfo.minDifficulty;
+
+						const money = appliedInfo.moneyAvailable;
+						const moneyMaxCalc = appliedInfo.moneyMax * this.maxMoneyGrowFrac;
+
+						if (security <= securityMin && money >= moneyMaxCalc) {
+							const threads = Math.ceil(ns.hackAnalyzeThreads(target, money * this.hackFrac));
+
+							if (await this.trySchedule(ns, actionOption, target, threads, sources) < threads) {
+								return;
+							}
+						}
+					} else {
+						throw new Error(`Invalid action type: ${actionOption.type}`);
+					}
 				}
 			}
-
-			ns.tprint("Wleeping " + ((execTime * numTimesToExecute) / 1000) + "s for action to finish");
-
-			// Sleep for `numTimesToExecute` executions.
-			await ns.sleep(execTime * numTimesToExecute);
-
-			// Try to buy server if the last action was hack.
-			//if (script === IMPLANT_PATH_HACK) {
-			//	ns.tprint("Trying to buy new server");
-			//	if (buyBestAffordableServer(ns)) {
-			//		ns.tprint("bought");
-			//	} else {
-			//		ns.tprint("failed");
-			//	}
-			//}
-		} else {
-			// No target
-
-			ns.tprint("Failed to find target");
-			return;
 		}
+
+		pruneActions() {
+			for (var actions of this.actions.values()) {
+				actions = actions.filter((action) => action.isRunning());
+			}
+		}
+
+		/**
+		 * @param {NS} ns - Netscript API
+		 * @param {{type: string, execTime: number}} actionTiming - action type with timing
+		 * @param {string} target - target of the attack
+		 * @param {number} threads - amount of threads
+		 * @param {string[]} sources - list of source hosts for the attack
+		 *
+		 * @returns {Promise<number>} - number of threads scheduled
+		 */
+		async trySchedule(ns, actionTiming, target, threads, sources) {
+			var scheduledThreads = 0;
+			var script = undefined;
+
+			switch (actionTiming.type) {
+				case Action.GROW:
+					script = IMPLANT_PATH_GROW;
+					break;
+				case Action.WEAKEN:
+					script = IMPLANT_PATH_WEAKEN;
+					break;
+				case Action.HACK:
+					script = IMPLANT_PATH_HACK;
+					break;
+			}
+
+			if (typeof script === 'string') {
+				const scriptSize = ns.getScriptRam(script, HOME);
+
+				for (const source of sources) {
+					const threadsNeeded = (threads - scheduledThreads);
+
+					if (threadsNeeded <= 0) {
+						break;
+					}
+
+					var freeRam = getFreeRam(ns, source);
+					if (source === HOME) {
+						freeRam = Math.max(freeRam - HOME_RAM_RESERVED, 0);
+					}
+
+					const possibleThreads = Math.min(Math.floor(freeRam / scriptSize), threadsNeeded);
+
+					if (possibleThreads > 0) {
+						if (await ns.scp(script, HOME, source)) {
+							// getTime is used as args to make the process unique.
+							// If the same process would start on a host it would fail.
+							if (ns.exec(script, source, possibleThreads, target, 1, new Date().getTime()) !== 0) {
+								ns.tprint(`\tScheduled ${possibleThreads} threads on ${source} to ${actionTiming.type} ${target}`);
+
+								var change;
+
+								switch (actionTiming.type) {
+									case Action.GROW:
+										// TODO: change; its hacky
+										const gMoney = ns.getServerMoneyAvailable(target);
+										const gMoneyMaxCalc = ns.getServerMaxMoney(target) * this.maxMoneyGrowFrac;
+										const gMult = Math.ceil(gMoneyMaxCalc / Math.max(gMoney, 0.001));
+										const gMultPerThread = gMult / threads;
+										change = new ChangeSet(ns.growthAnalyzeSecurity(possibleThreads), (gMoney - ((gMultPerThread * possibleThreads) * gMoney)));
+										break;
+									case Action.WEAKEN:
+										change = new ChangeSet(ns.weakenAnalyze(possibleThreads), 0);
+										break;
+									case Action.HACK:
+										change = new ChangeSet(ns.hackAnalyzeSecurity(possibleThreads), - (ns.getServerMoneyAvailable(target) * (ns.hackAnalyze(target) * possibleThreads)));
+										break;
+								}
+
+								if (typeof change === 'undefined') {
+									throw new Error("No change found for action type: " + actionTiming.type);
+								} else {
+									const newAction = new Action(actionTiming.type, source, target, new Date(), actionTiming.execTime, possibleThreads, change);
+
+									const targetActions = this.actions.get(target);
+									if (typeof targetActions === 'undefined') {
+										this.actions.set(target, [newAction]);
+									} else {
+										targetActions.push(newAction);
+									}
+
+									scheduledThreads += possibleThreads;
+								}
+							}
+						}
+					}
+				}
+
+				return scheduledThreads;
+			} else {
+				throw new Error("No script found for action type: " + actionTiming.type);
+			}
+		}
+	}
+
+	/**
+	 * @param {Server } server - server information
+	 * @param {ChangeSet[]} changes - list of changes to apply
+	 *
+	 * @returns {Server} - server information with changes applied
+	 */
+	function applyChanges(server, changes) {
+		for (const change of changes) {
+			server.moneyAvailable += change.money;
+			server.hackDifficulty += change.security;
+		}
+
+		return server;
+	}
+
+	// --- START MAIN ---
+
+	const hostManager = new HostManager();
+
+	while (true) {
+		await hostManager.run(ns);
+		await ns.sleep(100);
 	}
 }

@@ -40,6 +40,37 @@ EXAMPLES:
 }
 
 /**
+ * Returns a score for the host.
+ * This score determines the "optimal" target to hack.
+ * The higher the score the better.
+ *
+ * @param {NS} ns - Netscript API
+ * @param {string} host - Host to score
+ *
+ * @returns {number} - Score of the host
+ */
+function score(ns, host) {
+	const maxMoney = ns.getServerMaxMoney(host);
+
+	if (maxMoney > 0) {
+		const growthMultiplier = Math.ceil(maxMoney / (ns.getServerMoneyAvailable(host) + 0.001));
+		const threadsGrowFull = ns.growthAnalyze(host, growthMultiplier);
+		const timeGrowFull = ns.getGrowTime(host) * threadsGrowFull;
+
+		const securityLevelAfter = ns.getServerSecurityLevel(host) + ns.growthAnalyzeSecurity(threadsGrowFull);
+		const threadsSecurityMin = (securityLevelAfter - ns.getServerMinSecurityLevel(host)) / ns.weakenAnalyze(1);
+		const timeSecurityMin = ns.getWeakenTime(host) * threadsSecurityMin;
+
+		const threadsHack = 1.0 / ns.hackAnalyze(host);
+		const timeHack = ns.getHackTime(host) * threadsHack;
+
+		return maxMoney / (timeGrowFull + timeSecurityMin + timeHack);
+	} else {
+		return 0;
+	}
+}
+
+/**
  * Entry point for script.
  * @param {NS} ns - Netscript API
  */
@@ -72,10 +103,13 @@ ${host}:
     grow x2    : ${(ns.growthAnalyze(host, 2)).toFixed(2)} threads
     grow x3    : ${(ns.growthAnalyze(host, 3)).toFixed(2)} threads
     grow x4    : ${(ns.growthAnalyze(host, 4)).toFixed(2)} threads
+    grow (full): ${(ns.growthAnalyze(host, (ns.getServerMaxMoney(host) / ns.getServerMoneyAvailable(host)))).toFixed(2)} threads
     hack 10%   : ${(.10 / ns.hackAnalyze(host)).toFixed(2)} threads
     hack 25%   : ${(.25 / ns.hackAnalyze(host)).toFixed(2)} threads
     hack 50%   : ${(.50 / ns.hackAnalyze(host)).toFixed(2)} threads
+    hack (all) : ${((ns.getServerMoneyAvailable(host) / ns.getServerMaxMoney(host)) / ns.hackAnalyze(host)).toFixed(2)} threads
     hackChance : ${(ns.hackAnalyzeChance(host) * 100).toFixed(2)}%
+    score      : ${score(ns, host).toFixed(2)}
 `);
 	}
 }
