@@ -118,15 +118,17 @@ export async function main(ns) {
 		}
 
 		isRunning() {
-			return this.hasFinishedIn(0);
+			return !this.hasFinishedIn(0);
 		}
 
 		/**
 		 * @param {number} ms - Milliseconds
 		 */
 		hasFinishedIn(ms) {
-			const now = new Date().getTime();
-			return (this.startTime.getTime() + this.execTime) >= now + ms;
+			const future = new Date().getTime() + ms;
+			const execEnd = this.startTime.getTime() + this.execTime;
+
+			return future >= execEnd;
 		}
 	}
 
@@ -136,10 +138,9 @@ export async function main(ns) {
 		 */
 		actions = new Map();
 
-		constructor(maxHackAmount = 0.3, maxMoneyGrowFrac = 1.0, hackFrac = 0.05) {
-			this.maxHackAmount = maxHackAmount;
+		constructor(maxHackFrac = 0.3, maxMoneyGrowFrac = 0.9) {
+			this.maxHackFrac = maxHackFrac;
 			this.maxMoneyGrowFrac = maxMoneyGrowFrac;
-			this.hackFrac = hackFrac;
 		}
 
 		/**
@@ -158,11 +159,10 @@ export async function main(ns) {
 				return;
 			}
 
-			this.pruneActions();
-
 			const weakenAmount = ns.weakenAnalyze(1);
 
 			for (const target of targets) {
+				this.pruneActions();
 				const targetInfo = ns.getServer(target);
 
 				const actionOptions = [
@@ -199,9 +199,9 @@ export async function main(ns) {
 							const growthMultiplier = Math.ceil(moneyMaxCalc / (money + 0.001));
 							const threads = Math.ceil(ns.growthAnalyze(target, growthMultiplier));
 
-							//const change = new ChangeSet(ns.growthAnalyzeSecurity(threads), money * growthMultiplier);
+							const change = new ChangeSet(ns.growthAnalyzeSecurity(threads), money * growthMultiplier);
 
-							if (await this.trySchedule(ns, actionOption, target, threads, sources) < threads) {
+							if (await this.trySchedule(ns, actionOption, target, threads, sources, change) < threads) {
 								return;
 							}
 						}
@@ -213,7 +213,9 @@ export async function main(ns) {
 							const securityDiff = security - securityMin;
 							const threads = Math.ceil(securityDiff / weakenAmount);
 
-							if (await this.trySchedule(ns, actionOption, target, threads, sources) < threads) {
+							const change = new ChangeSet(-ns.weakenAnalyze(threads), 0);
+
+							if (await this.trySchedule(ns, actionOption, target, threads, sources, change) < threads) {
 								return;
 							}
 						}
@@ -225,9 +227,12 @@ export async function main(ns) {
 						const moneyMaxCalc = appliedInfo.moneyMax * this.maxMoneyGrowFrac;
 
 						if (security <= securityMin && money >= moneyMaxCalc) {
-							const threads = Math.ceil(ns.hackAnalyzeThreads(target, money * this.hackFrac));
+							const hackMoney = money * this.maxHackFrac;
+							const threads = Math.ceil(ns.hackAnalyzeThreads(target, hackMoney));
 
-							if (await this.trySchedule(ns, actionOption, target, threads, sources) < threads) {
+							const change = new ChangeSet(ns.hackAnalyzeSecurity(threads), -hackMoney);
+
+							if (await this.trySchedule(ns, actionOption, target, threads, sources, change) < threads) {
 								return;
 							}
 						}
@@ -250,10 +255,11 @@ export async function main(ns) {
 		 * @param {string} target - target of the attack
 		 * @param {number} threads - amount of threads
 		 * @param {string[]} sources - list of source hosts for the attack
+		 * @param {ChangeSet} totalChange - total change for all threads
 		 *
 		 * @returns {Promise<number>} - number of threads scheduled
 		 */
-		async trySchedule(ns, actionTiming, target, threads, sources) {
+		async trySchedule(ns, actionTiming, target, threads, sources, totalChange) {
 			var scheduledThreads = 0;
 			var script = undefined;
 
@@ -293,24 +299,10 @@ export async function main(ns) {
 							if (ns.exec(script, source, possibleThreads, target, 1, new Date().getTime()) !== 0) {
 								ns.tprint(`\tScheduled ${possibleThreads} threads on ${source} to ${actionTiming.type} ${target}`);
 
-								var change;
+								const threadFrac = possibleThreads / threads;
+								const change = new ChangeSet(totalChange.security * threadFrac, totalChange.money * threadFrac);
 
-								switch (actionTiming.type) {
-									case Action.GROW:
-										// TODO: change; its hacky
-										const gMoney = ns.getServerMoneyAvailable(target);
-										const gMoneyMaxCalc = ns.getServerMaxMoney(target) * this.maxMoneyGrowFrac;
-										const gMult = Math.ceil(gMoneyMaxCalc / Math.max(gMoney, 0.001));
-										const gMultPerThread = gMult / threads;
-										change = new ChangeSet(ns.growthAnalyzeSecurity(possibleThreads), (gMoney - ((gMultPerThread * possibleThreads) * gMoney)));
-										break;
-									case Action.WEAKEN:
-										change = new ChangeSet(ns.weakenAnalyze(possibleThreads), 0);
-										break;
-									case Action.HACK:
-										change = new ChangeSet(ns.hackAnalyzeSecurity(possibleThreads), - (ns.getServerMoneyAvailable(target) * (ns.hackAnalyze(target) * possibleThreads)));
-										break;
-								}
+								ns.tprint(`\t\tChange: ${JSON.stringify(change)}`);
 
 								if (typeof change === 'undefined') {
 									throw new Error("No change found for action type: " + actionTiming.type);

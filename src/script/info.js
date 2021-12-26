@@ -107,7 +107,7 @@ ${host}:
     hack 10%   : ${(.10 / ns.hackAnalyze(host)).toFixed(2)} threads
     hack 25%   : ${(.25 / ns.hackAnalyze(host)).toFixed(2)} threads
     hack 50%   : ${(.50 / ns.hackAnalyze(host)).toFixed(2)} threads
-    hack (all) : ${((ns.getServerMoneyAvailable(host) / ns.getServerMaxMoney(host)) / ns.hackAnalyze(host)).toFixed(2)} threads
+    hack (cur) : ${((ns.getServerMoneyAvailable(host) / ns.getServerMaxMoney(host)) / ns.hackAnalyze(host)).toFixed(2)} threads
     hackChance : ${(ns.hackAnalyzeChance(host) * 100).toFixed(2)}%
     score      : ${score(ns, host).toFixed(2)}
 `);
