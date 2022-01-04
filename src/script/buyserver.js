@@ -10,6 +10,9 @@
 const FLAG_SCHEMA = [
 	['help', false],
 	['dryRun', false],
+	['info', false],
+	['replace', false],
+	['forceReplace', false],
 	['minRam', 32],
 	['maxMoneyFrac', 1.0],
 	['namePrefix', 'server'],
@@ -40,11 +43,14 @@ USAGE:
 	run ${ns.getScriptName()} [OPTIONS]
 
 OPTIONS:
-	--help            Will print this help message
-	--dryRun          Won't buy a server but will print information about it
-	--minRam          Sets the lower bound on memory a new server needs. Anything below won't be purchased
-	--maxMoneyFrac    Limits the amount of money to spend on a server [0.0 - 1.0] (playerMoney * max-money-frac)
-	--namePrefix      Hostname prefix for the server
+	--help                        Will print this help message
+	--dryRun                      Won't buy a server but will print information about it
+	--info                        Prints information about servers and exits without buying
+	--replace                     If all server slots are filled it will try to replace the worst one
+	--forceReplace                Same as '--replace' but will kill all script on the server to be replaced
+	--minRam=MIN_RAM              Sets the lower bound on memory a new server needs. Anything below won't be purchased
+	--maxMoneyFrac=[0.0 - 1.0]    Limits the amount of money to spend on a server [0.0 - 1.0] (playerMoney * max-money-frac)
+	--namePrefix=NAME             Hostname prefix for the server
 
 EXAMPLES:
 	> run ${ns.getScriptName()} --dry-run --max-money-frac=0.6
@@ -56,7 +62,7 @@ EXAMPLES:
 /**
  * Checks the arguments.
  *
- * @typedef {{valid: boolean, dryRun: boolean, minRam: number, maxMoneyFrac: number, namePrefix: string}} Args
+ * @typedef {{valid: boolean, dryRun: boolean, info: boolean, replace: boolean, forceReplace: boolean, minRam: number, maxMoneyFrac: number, namePrefix: string}} Args
  *
  * @param {NS} ns - Netscript API
  * @param {any} flags - Parsed flags
@@ -70,6 +76,9 @@ function checkFlags(ns, flags) {
 	var vArgs = {
 		valid: true,
 		dryRun: false,
+		info: false,
+		replace: false,
+		forceReplace: false,
 		minRam: 32,
 		maxMoneyFrac: 1.0,
 		namePrefix: 'server',
@@ -80,6 +89,30 @@ function checkFlags(ns, flags) {
 		vArgs.dryRun = dryRun;
 	} else {
 		ns.tprint("ERROR Argument `dryRun` not of type boolean");
+		vArgs.valid = false;
+	}
+
+	const info = flags.info;
+	if (typeof info === 'boolean') {
+		vArgs.info = info;
+	} else {
+		ns.tprint("ERROR Argument `info` not of type boolean");
+		vArgs.valid = false;
+	}
+
+	const replace = flags.replace;
+	if (typeof replace === 'boolean') {
+		vArgs.replace = replace;
+	} else {
+		ns.tprint("ERROR Argument `replace` not of type boolean");
+		vArgs.valid = false;
+	}
+
+	const forceReplace = flags.forceReplace;
+	if (typeof forceReplace === 'boolean') {
+		vArgs.forceReplace = forceReplace;
+	} else {
+		ns.tprint("ERROR Argument `forceReplace` not of type boolean");
 		vArgs.valid = false;
 	}
 
@@ -143,19 +176,55 @@ export async function main(ns) {
 		return;
 	}
 
-	const moneyLimit = ns.getServerMoneyAvailable('home') * args.maxMoneyFrac;
-	const minRamPow = Math.ceil(Math.log2(args.minRam));
+	if (args.info) {
+		const servers = new Map();
 
-	ns.tprint(`INFO Trying to buy server for ${ns.nFormat(moneyLimit, "$0.000a")} with at least ${args.minRam}GB ram`);
+		for (const host of ns.getPurchasedServers()) {
+			const ram = ns.getServerMaxRam(host);
+			const value = servers.get(ram);
+			servers.set(ram, typeof value === 'undefined' ? 1 : value + 1);
+		}
 
-	const serverLimit = ns.getPurchasedServerLimit();
-	const serverPurchased = ns.getPurchasedServers();
+		var message = (`
+Owned:
+	Servers: ${ns.getPurchasedServers().length} / ${ns.getPurchasedServerLimit()}
+`);
 
-	if (serverPurchased.length >= serverLimit) {
-		// TODO: replace flag with replace logic
-		ns.tprint("ERROR No free server slot");
-		return;
+		for (const [ram, count] of servers) {
+			if (count > 0) {
+				message += `\t${ram}: ${count}\n`;
+			}
+		}
+
+		message += '\nCosts:\n';
+
+		for (var i = 0; i <= MAX_RAM_POW; ++i) {
+			const ram = Math.pow(2, i);
+			message += `\t${ram}: ${ns.nFormat(ns.getPurchasedServerCost(ram), "$0.000a")}\n`;
+		}
+
+		ns.tprint(message);
 	} else {
+		const moneyLimit = ns.getServerMoneyAvailable('home') * args.maxMoneyFrac;
+		const minRamPow = Math.ceil(Math.log2(args.minRam));
+
+		ns.tprint(`INFO Trying to buy server for ${ns.nFormat(moneyLimit, "$0.000a")} with at least ${args.minRam}GB ram`);
+
+		const serverLimit = ns.getPurchasedServerLimit();
+		const serverPurchased = ns.getPurchasedServers();
+		var replaceName = undefined;
+
+		if (serverPurchased.length >= serverLimit) {
+			if (args.replace || args.forceReplace) {
+				ns.tprint("INFO No free server slot. Trying to replace worst one");
+
+				replaceName = serverPurchased.sort((a, b) => ns.getServerMaxRam(a) - ns.getServerMaxRam(b))[0];
+			} else {
+				ns.tprint("ERROR No free server slot. Try running with `--replace` enabled");
+				return;
+			}
+		}
+
 		ns.tprint("INFO Trying to find server to purchase");
 
 		for (var pow = MAX_RAM_POW; pow >= minRamPow; --pow) {
@@ -169,6 +238,26 @@ export async function main(ns) {
 				} else {
 					ns.tprint(`INFO Trying to buy server with ${serverRam}GB ram for ${ns.nFormat(serverCost, "$0.000a")}`);
 
+					if (typeof replaceName !== 'undefined') {
+						const replaceRam = ns.getServerMaxRam(replaceName);
+						ns.tprint(`Trying to replace server '${replaceName}' with ${replaceRam}GB ram`);
+
+						if (replaceRam < serverRam) {
+							if (args.forceReplace) {
+								ns.tprint('INFO Killing scripts on worst server');
+								ns.killall(replaceName);
+							}
+
+							if (!ns.deleteServer(replaceName)) {
+								ns.tprint(`Failed to delete worst server`);
+								return;
+							}
+						} else {
+							ns.tprint(`No better server could be bought (worst is better)`);
+							return;
+						}
+					}
+
 					const serverName = ns.purchaseServer(args.namePrefix, serverRam);
 					if (serverName !== '') {
 						ns.tprint(`INFO Bought server '${serverName}'`);
@@ -180,9 +269,9 @@ export async function main(ns) {
 				}
 			}
 		}
-	}
 
-	ns.tprint("ERROR Failed find server for requirements");
+		ns.tprint("ERROR Failed find server for requirements");
+	}
 }
 
 

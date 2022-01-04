@@ -1,0 +1,163 @@
+/**
+ * @typedef { import('./typedef/bitburner.t').NS } NS
+ */
+
+import {HOME, IMPLANT_PATH_GROW, IMPLANT_PATH_WEAKEN, IMPLANT_PATH_HACK} from 'const.js';
+import {discoverAll} from 'libscan.js';
+import {tryPwn} from 'libpwn.js';
+import {getFreeRam, retainSources, retainTargets} from 'libhost.js';
+import {hasRequirements as hasStage2Requirements} from 'stage2.js';
+
+/**
+ * Indicates if hacknet should be upgraded (can be enabled for offline income).
+ *
+ * @type {boolean}
+ */
+const UPGRADE_HACKNET = false;
+
+/**
+ * Amount of ram required on the home server to advance to this stage.
+ * @type {number}
+ */
+export const HOME_RAM_REQUIRED = 32;
+
+/**
+ * Additional amount of ram to keep reserved on the home server.
+ * This is in addition to the ram already occupied by running scripts.
+ *
+ * @type {number}
+ */
+const HOME_RAM_RESERVED = 8;
+
+/**
+ * Checks if the requirements for this stage are met.
+ *
+ * @param {NS} ns - Netscript API
+ *
+ * @returns {boolean} - Boolean indicating if the stages requirements are met
+ */
+export function hasRequirements(ns) {
+	return ns.getServerMaxRam(HOME) >= HOME_RAM_REQUIRED
+		// Level 100 allows for better hack targets.
+		// If we switch before we would re-target after 100 before we get the hack
+		// value on the old target.
+		&& ns.getHackingLevel() >= 100;
+}
+
+/**
+ * Returns a score for the host.
+ * This score determines the "optimal" target to hack.
+ * The higher the score the better.
+ *
+ * @param {NS} ns - Netscript API
+ * @param {string} host - Host to score
+ *
+ * @returns {number} - Score of the host
+ */
+export function score(ns, host) {
+	const value = ns.getServerMaxMoney(host);
+	const time = ns.getWeakenTime(host) + ns.getGrowTime(host) + ns.getHackTime(host);
+
+	return value / time;
+}
+
+/**
+ * Entry point for script.
+ * @param {NS} ns - Netscript API
+ */
+export async function main(ns) {
+	// Lauch supporting scripts.
+	if (UPGRADE_HACKNET) {
+		ns.run("stage1_hacknet.js");
+	}
+
+	ns.tprint("---- MESSAGE ----");
+	ns.tprint("To kickstart this stage buy the darknet upgrade and as many port opening software as possible.");
+	ns.tprint("After that try to gain favor with the tech factions.");
+	ns.tprint("-----------------");
+
+	while (!hasStage2Requirements(ns)) {
+		const hosts = retainSources(Array.from(discoverAll(ns)));
+
+		const sources = Array.from(tryPwn(ns, hosts).keys());
+		const targets = retainTargets(ns, sources)
+			.sort((a, b) => score(ns, b) - score(ns, a));
+		ns.print("Targets: " + targets);
+
+		if (targets.length === 0) {
+			ns.tprint("No targets found");
+			return;
+		}
+
+		const target = targets[0];
+
+		if (typeof target !== 'undefined') {
+			ns.tprint("Next Target: " + target);
+
+			const moneyThreshold = ns.getServerMaxMoney(target) * 0.9;
+			const securityTreshold = ns.getServerMinSecurityLevel(target) + 3;
+
+			var numTimesToExecute = 1.05;
+
+			/**
+			 * @type {string}
+			 */
+			var script;
+
+			/**
+			 * @type {number}
+			 */
+			var execTime;
+
+			if (ns.getServerSecurityLevel(target) > securityTreshold) {
+				ns.tprint("weakening");
+				script = IMPLANT_PATH_WEAKEN;
+				execTime = ns.getWeakenTime(target);
+			} else if (ns.getServerMoneyAvailable(target) < moneyThreshold) {
+				ns.tprint("growing");
+				script = IMPLANT_PATH_GROW;
+				execTime = ns.getGrowTime(target);
+			} else {
+				ns.tprint("hacking");
+				script = IMPLANT_PATH_HACK;
+				execTime = ns.getHackTime(target);
+			}
+
+			if (typeof script === 'undefined' || typeof execTime === 'undefined') {
+				ns.tprint("Script error: `script` or `execTime` not defined");
+				return;
+			}
+
+			for (const host of sources) {
+				// Copy over required script
+				await ns.scp(script, HOME, host);
+
+				var freeRam = getFreeRam(ns, host);
+				if (host === HOME) {
+					freeRam = Math.max(freeRam - HOME_RAM_RESERVED, 0);
+				}
+
+				// Calculate max amount of threads for script and host.
+				// Floor is used as `exec` will round to the nearest integer
+				// value which could exceed the ram, causing `exec` to fail.
+				var numThreads = Math.floor(freeRam / ns.getScriptRam(script, HOME));
+
+				if (numThreads > 0) {
+					ns.exec(script, host, numThreads, target, 1);
+				}
+			}
+
+			ns.tprint("Sleeping " + ((execTime * numTimesToExecute) / 1000) + "s for action to finish");
+
+			// Sleep for `numTimesToExecute` executions.
+			await ns.sleep(execTime * numTimesToExecute);
+		} else {
+			// No target
+			ns.tprint("Failed to find target");
+			await ns.sleep(1000);
+		}
+	}
+
+	ns.tprint("Re-checking requirements");
+	ns.spawn("trampoline.js");
+}

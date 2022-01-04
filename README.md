@@ -38,3 +38,8 @@ make serve
 wget http://localhost:8080/init.js init.js
 run init.js
 ```
+
+## Ressources
+
+- Stock script: <https://teddit.net/r/Bitburner/comments/rn7l84/stock_script_to_end_your_financial_problems/>
+- Improves hacking scripts: <https://github.com/Hedrauta/bitburner-scripts>

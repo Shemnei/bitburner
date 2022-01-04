@@ -6,7 +6,7 @@ import {HOME, IMPLANT_PATH_HACK} from 'const.js';
 import {discoverAll} from 'libscan.js';
 import {tryPwn} from 'libpwn.js';
 import {getFreeRam, retainSources, retainTargets} from 'libhost.js';
-import {HOME_RAM_REQUIRED} from 'stage1.js';
+import {HOME_RAM_REQUIRED, hasRequirements as hasStage1Requirements} from 'stage1.js';
 
 // TODO: const list of requirements/dependencies
 
@@ -50,11 +50,13 @@ export async function main(ns) {
 	ns.tprint("---- MESSAGE ----");
 	ns.tprint("To advance to the next stage upgrade the ram of the home server in the city.");
 	ns.tprint("RAM required: " + HOME_RAM_REQUIRED);
+	ns.tprint("Hacking level required: 100");
+	ns.tprint("");
+	ns.tprint("TIP: First buy the darknet upgrade and then the first two port opening softwares.");
 	ns.tprint("-----------------");
 
-	for (var i = 0; i < 3; ++i) {
+	while (!hasStage1Requirements(ns)) {
 		const hosts = retainSources(Array.from(discoverAll(ns)));
-		ns.tprint(hosts);
 		const sources = Array.from(tryPwn(ns, hosts).keys());
 		const targets = retainTargets(ns, sources)
 			.sort((a, b) => score(ns, b) - score(ns, a));
@@ -105,11 +107,6 @@ export async function main(ns) {
 		}
 	}
 
-	if (UPGRADE_HACKNET) {
-		ns.tprint("Launching hacknet upgrade script");
-		ns.spawn("stage0_hacknet.js");
-	} else {
-		ns.tprint("Re-checking requirements");
-		ns.spawn("trampoline.js");
-	}
+	ns.tprint("Re-checking requirements");
+	ns.spawn("trampoline.js");
 }

@@ -1,7 +1,7 @@
 /**
  * @public
  */
-interface Player {
+export interface Player {
   hacking: number;
   hp: number;
   max_hp: number;
